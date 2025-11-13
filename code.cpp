@@ -10,7 +10,7 @@
 #include <memory>    // For std::unique_ptr
 #include <stdexcept> // For exceptions
 
-// --- Configuration Constants ---
+
 // Motor Pin Definitions (BCM GPIO numbering)
 #define LEFT_MOTOR_PWM 17  // GPIO17 - Left motors PWM (speed)
 #define LEFT_MOTOR_DIR 27  // GPIO27 - Left motors direction (HIGH=forward, LOW=backward)
@@ -29,11 +29,9 @@
 #define AXIS_LEFT_TRIGGER 2
 #define AXIS_RIGHT_TRIGGER 5
 
-// --- Global Variables ---
 // Volatile signal flag for clean loop termination
 volatile sig_atomic_t running = 1;
 
-// --- Helper Functions ---
 
 /**
  * @brief Applies a deadzone to an analog input value and scales the result.
@@ -49,8 +47,6 @@ float applyDeadzone(float value, float deadzone) {
     float sign = (value > 0) ? 1.0f : -1.0f;
     return sign * ((std::abs(value) - deadzone) / (1.0f - deadzone));
 }
-
-// --- Class for Motor Control ---
 
 class MotorController {
 public:
@@ -127,7 +123,6 @@ public:
     }
 };
 
-// --- Signal Handler ---
 
 void signalHandler(int signum) {
     if (signum == SIGINT) {
@@ -136,7 +131,6 @@ void signalHandler(int signum) {
     }
 }
 
-// --- Main Program ---
 
 int main() {
     std::cout << "=== Mars Rover Control System ===" << std::endl;
@@ -220,10 +214,6 @@ int main() {
             // Small delay to ensure the process doesn't hog the CPU
             usleep(CONTROL_LOOP_DELAY);
         }
-
-        // Cleanup actions run automatically here:
-        // 1. motors.stopAllMotors() is called before main exits/returns.
-        // 2. joystick_fd_ptr's custom deleter closes the file.
         
     } catch (const std::exception& e) {
         std::cerr << "A critical error occurred: " << e.what() << std::endl;
