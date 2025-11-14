@@ -154,7 +154,7 @@ int main() {
         return 1;
     }
     
-    std::cout << "\n✅ Rover ready!" << std::endl;
+    std::cout << "\nRover ready!" << std::endl;
     std::cout << "Controls:" << std::endl;
     std::cout << "  Right Trigger: Forward" << std::endl;
     std::cout << "  Left Trigger: Backward" << std::endl;
@@ -210,3 +210,4 @@ int main() {
     
     return 0;
 }
+
