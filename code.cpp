@@ -6,208 +6,300 @@
 #include <cmath>
 #include <csignal>
 #include <algorithm>
+#include <memory>
+#include <stdexcept>
 
-// Motor Pin Definitions (BCM GPIO numbering)
-#define LEFT_MOTOR_PWM 27        // GPIO27 - Left motors PWM (speed)
-#define LEFT_MOTOR_DIR 5        // GPIO5 - Left motors direction (HIGH=forward, LOW=backward)
-#define RIGHT_MOTOR_PWM 6       // GPIO6 - Right motors PWM (speed)
-#define RIGHT_MOTOR_DIR 13       // GPIO13 - Right motors direction (HIGH=forward, LOW=backward)
-
-// Controller Configuration
+// Configuration Constants
 #define JOYSTICK_DEVICE "/dev/input/js0"
-#define DEADZONE 0.15f           // 15% deadzone for stick and triggers
-#define PWM_FREQUENCY 1000       // 1kHz PWM frequency
-#define PWM_RANGE 255            // PWM range (0-255)
-#define TURN_AGGRESSION 0.7f     // How aggressive the turning is (0.0-1.0)
+#define DEADZONE 0.15f
+#define PWM_FREQUENCY 1000
+#define PWM_RANGE 255
+#define TURN_AGGRESSION 0.7f
+#define CONTROL_LOOP_DELAY 10000  // 10ms = 100Hz
 
-// Xbox One Controller Axis Mapping
+// Xbox Controller Axis Mapping
 #define AXIS_LEFT_STICK_X 0
 #define AXIS_LEFT_TRIGGER 2
 #define AXIS_RIGHT_TRIGGER 5
 
-// Global variables
+// Global flag for signal handling
 volatile sig_atomic_t running = 1;
-int joystick_fd = -1;
 
-// Signal handler for clean shutdown
+// Signal handler
 void signalHandler(int signum) {
     std::cout << "\nShutting down rover safely..." << std::endl;
     running = 0;
 }
 
-// Initialize GPIO pins for motors using pigpio
-bool initMotors() {
-    // Initialize pigpio library
-    if (gpioInitialise() < 0) {
-        std::cerr << "Failed to initialize pigpio library" << std::endl;
-        return false;
-    }
-    
-    // Set GPIO modes
-    gpioSetMode(LEFT_MOTOR_PWM, PI_OUTPUT);
-    gpioSetMode(LEFT_MOTOR_DIR, PI_OUTPUT);
-    gpioSetMode(RIGHT_MOTOR_PWM, PI_OUTPUT);
-    gpioSetMode(RIGHT_MOTOR_DIR, PI_OUTPUT);
-    
-    // Set PWM frequency (optional, default is usually fine)
-    gpioSetPWMfrequency(LEFT_MOTOR_PWM, PWM_FREQUENCY);
-    gpioSetPWMfrequency(RIGHT_MOTOR_PWM, PWM_FREQUENCY);
-    
-    // Set PWM range
-    gpioSetPWMrange(LEFT_MOTOR_PWM, PWM_RANGE);
-    gpioSetPWMrange(RIGHT_MOTOR_PWM, PWM_RANGE);
-    
-    // Initialize to forward direction, stopped
-    gpioWrite(LEFT_MOTOR_DIR, 1);
-    gpioWrite(RIGHT_MOTOR_DIR, 1);
-    gpioPWM(LEFT_MOTOR_PWM, 0);
-    gpioPWM(RIGHT_MOTOR_PWM, 0);
-    
-    std::cout << "Motors initialized successfully" << std::endl;
-    return true;
-}
 
-// Stop all motors
-void stopAllMotors() {
-    gpioPWM(LEFT_MOTOR_PWM, 0);
-    gpioPWM(RIGHT_MOTOR_PWM, 0);
-}
+class MotorController {
+private:
+    int leftPwmPin;
+    int leftDirPin;
+    int rightPwmPin;
+    int rightDirPin;
+    bool initialized;
 
-// Apply deadzone to analog input
-float applyDeadzone(float value, float deadzone) {
-    if (std::abs(value) < deadzone) {
-        return 0.0f;
-    }
-    float sign = (value > 0) ? 1.0f : -1.0f;
-    return sign * ((std::abs(value) - deadzone) / (1.0f - deadzone));
-}
+public:
+    MotorController(int leftPWM, int leftDIR, int rightPWM, int rightDIR)
+        : leftPwmPin(leftPWM), leftDirPin(leftDIR),
+          rightPwmPin(rightPWM), rightDirPin(rightDIR),
+          initialized(false) {}
 
-// Set motor speeds with differential steering
-void setMotorSpeed(float throttle, float steering) {
-    // Clamp inputs
-    throttle = std::clamp(throttle, -1.0f, 1.0f);
-    steering = std::clamp(steering, -1.0f, 1.0f);
-    
-    float leftSpeed, rightSpeed;
-    
-    // Differential steering calculation
-    if (steering < 0) {
-        // Turning left
-        leftSpeed = throttle * (1.0f + steering * TURN_AGGRESSION);
-        rightSpeed = throttle;
-    } else if (steering > 0) {
-        // Turning right
-        leftSpeed = throttle;
-        rightSpeed = throttle * (1.0f - steering * TURN_AGGRESSION);
-    } else {
-        // Straight
-        leftSpeed = throttle;
-        rightSpeed = throttle;
+    ~MotorController() {
+        if (initialized) {
+            stop();
+            gpioTerminate();
+        }
     }
-    
-    // Final clamp
-    leftSpeed = std::clamp(leftSpeed, -1.0f, 1.0f);
-    rightSpeed = std::clamp(rightSpeed, -1.0f, 1.0f);
-    
-    // Convert to PWM values (0-255)
-    int leftPWM = static_cast<int>(std::abs(leftSpeed) * PWM_RANGE);
-    int rightPWM = static_cast<int>(std::abs(rightSpeed) * PWM_RANGE);
-    
-    // Set direction and speed for left motors
-    gpioWrite(LEFT_MOTOR_DIR, leftSpeed >= 0 ? 1 : 0);
-    gpioPWM(LEFT_MOTOR_PWM, leftPWM);
-    
-    // Set direction and speed for right motors
-    gpioWrite(RIGHT_MOTOR_DIR, rightSpeed >= 0 ? 1 : 0);
-    gpioPWM(RIGHT_MOTOR_PWM, rightPWM);
-}
 
-// Initialize Xbox controller
-bool initController() {
-    joystick_fd = open(JOYSTICK_DEVICE, O_RDONLY | O_NONBLOCK);
-    if (joystick_fd < 0) {
-        std::cerr << "Error: Could not open joystick device " << JOYSTICK_DEVICE << std::endl;
-        std::cerr << "Make sure your Xbox controller is connected." << std::endl;
-        std::cerr << "Check with: ls -l /dev/input/js*" << std::endl;
-        return false;
-    }
-    std::cout << "Xbox controller connected successfully" << std::endl;
-    return true;
-}
+    bool initialize() {
+        if (gpioInitialise() < 0) {
+            std::cerr << "Failed to initialize pigpio library" << std::endl;
+            return false;
+        }
 
-int main() {
-    std::cout << "=== Mars Rover Control System ===" << std::endl;
-    std::cout << "Initializing..." << std::endl;
-    
-    // Setup signal handler for Ctrl+C
-    signal(SIGINT, signalHandler);
-    
-    // Initialize hardware
-    if (!initMotors()) {
-        std::cerr << "Failed to initialize motors. Exiting." << std::endl;
-        return 1;
+        // Configure GPIO pins
+        gpioSetMode(leftPwmPin, PI_OUTPUT);
+        gpioSetMode(leftDirPin, PI_OUTPUT);
+        gpioSetMode(rightPwmPin, PI_OUTPUT);
+        gpioSetMode(rightDirPin, PI_OUTPUT);
+
+        // Set PWM frequency and range
+        gpioSetPWMfrequency(leftPwmPin, PWM_FREQUENCY);
+        gpioSetPWMfrequency(rightPwmPin, PWM_FREQUENCY);
+        gpioSetPWMrange(leftPwmPin, PWM_RANGE);
+        gpioSetPWMrange(rightPwmPin, PWM_RANGE);
+
+        // Initialize to stopped state
+        gpioWrite(leftDirPin, 1);
+        gpioWrite(rightDirPin, 1);
+        gpioPWM(leftPwmPin, 0);
+        gpioPWM(rightPwmPin, 0);
+
+        initialized = true;
+        std::cout << "✅ Motors initialized on GPIO pins" << std::endl;
+        std::cout << "   Left:  PWM=" << leftPwmPin << " DIR=" << leftDirPin << std::endl;
+        std::cout << "   Right: PWM=" << rightPwmPin << " DIR=" << rightDirPin << std::endl;
+        return true;
     }
-    
-    if (!initController()) {
-        std::cerr << "Failed to initialize controller. Exiting." << std::endl;
-        gpioTerminate();
-        return 1;
+
+    void stop() {
+        if (initialized) {
+            gpioPWM(leftPwmPin, 0);
+            gpioPWM(rightPwmPin, 0);
+        }
     }
-    
-    std::cout << "\nRover ready!" << std::endl;
-    std::cout << "Controls:" << std::endl;
-    std::cout << "  Right Trigger: Forward" << std::endl;
-    std::cout << "  Left Trigger: Backward" << std::endl;
-    std::cout << "  Left Stick (X-axis): Steering" << std::endl;
-    std::cout << "  Press Ctrl+C to exit\n" << std::endl;
-    
-    // Controller state
-    float rightTrigger = 0.0f;
-    float leftTrigger = 0.0f;
-    float steeringX = 0.0f;
-    
-    struct js_event event;
-    
-    // Main control loop
-    while (running) {
-        // Read controller events
-        while (read(joystick_fd, &event, sizeof(event)) > 0) {
+
+    void setSpeed(float throttle, float steering) {
+        if (!initialized) return;
+
+        // Clamp inputs to valid range
+        throttle = std::clamp(throttle, -1.0f, 1.0f);
+        steering = std::clamp(steering, -1.0f, 1.0f);
+
+        // Calculate differential steering
+        float leftSpeed, rightSpeed;
+
+        if (steering < 0) {
+            // Turning left - reduce left motor speed
+            leftSpeed = throttle * (1.0f + steering * TURN_AGGRESSION);
+            rightSpeed = throttle;
+        } else if (steering > 0) {
+            // Turning right - reduce right motor speed
+            leftSpeed = throttle;
+            rightSpeed = throttle * (1.0f - steering * TURN_AGGRESSION);
+        } else {
+            // Straight movement
+            leftSpeed = throttle;
+            rightSpeed = throttle;
+        }
+
+        // Final clamp to ensure valid range
+        leftSpeed = std::clamp(leftSpeed, -1.0f, 1.0f);
+        rightSpeed = std::clamp(rightSpeed, -1.0f, 1.0f);
+
+        // Convert to PWM values
+        int leftPWM = static_cast<int>(std::abs(leftSpeed) * PWM_RANGE);
+        int rightPWM = static_cast<int>(std::abs(rightSpeed) * PWM_RANGE);
+
+        // Set direction and speed
+        gpioWrite(leftDirPin, leftSpeed >= 0 ? 1 : 0);
+        gpioPWM(leftPwmPin, leftPWM);
+
+        gpioWrite(rightDirPin, rightSpeed >= 0 ? 1 : 0);
+        gpioPWM(rightPwmPin, rightPWM);
+    }
+};
+
+
+class XboxController {
+private:
+    int fileDescriptor;
+    float rightTrigger;
+    float leftTrigger;
+    float steeringX;
+    float deadzone;
+
+    float applyDeadzone(float value) {
+        if (std::abs(value) < deadzone) {
+            return 0.0f;
+        }
+        float sign = (value > 0) ? 1.0f : -1.0f;
+        return sign * ((std::abs(value) - deadzone) / (1.0f - deadzone));
+    }
+
+public:
+    XboxController(float deadzoneThreshold = DEADZONE)
+        : fileDescriptor(-1), rightTrigger(0.0f), leftTrigger(0.0f),
+          steeringX(0.0f), deadzone(deadzoneThreshold) {}
+
+    ~XboxController() {
+        if (fileDescriptor >= 0) {
+            close(fileDescriptor);
+        }
+    }
+
+    bool initialize(const char* device = JOYSTICK_DEVICE) {
+        fileDescriptor = open(device, O_RDONLY | O_NONBLOCK);
+        if (fileDescriptor < 0) {
+            std::cerr << "❌ Error: Could not open joystick device " << device << std::endl;
+            std::cerr << "   Make sure your Xbox controller is connected" << std::endl;
+            std::cerr << "   Check with: ls -l /dev/input/js*" << std::endl;
+            return false;
+        }
+        std::cout << "✅ Xbox controller connected successfully" << std::endl;
+        return true;
+    }
+
+    void update() {
+        if (fileDescriptor < 0) return;
+
+        struct js_event event;
+        while (read(fileDescriptor, &event, sizeof(event)) > 0) {
             if (event.type == JS_EVENT_AXIS) {
                 float value = event.value / 32767.0f;
-                
+
                 switch (event.number) {
                     case AXIS_LEFT_STICK_X:
-                        steeringX = applyDeadzone(value, DEADZONE);
+                        steeringX = applyDeadzone(value);
                         break;
-                        
+
                     case AXIS_RIGHT_TRIGGER:
-                        rightTrigger = applyDeadzone((value + 1.0f) / 2.0f, DEADZONE);
+                        // Convert from -1..1 to 0..1 range
+                        rightTrigger = applyDeadzone((value + 1.0f) / 2.0f);
                         break;
-                        
+
                     case AXIS_LEFT_TRIGGER:
-                        leftTrigger = applyDeadzone((value + 1.0f) / 2.0f, DEADZONE);
+                        leftTrigger = applyDeadzone((value + 1.0f) / 2.0f);
                         break;
                 }
             }
         }
-        
-        // Calculate throttle
-        float throttle = rightTrigger - leftTrigger;
-        
-        // Apply motor control
-        setMotorSpeed(throttle, steeringX);
-        
-        // Small delay (10ms = 100Hz)
-        usleep(10000);
     }
-    
-    // Cleanup
-    std::cout << "Stopping motors..." << std::endl;
-    stopAllMotors();
-    close(joystick_fd);
-    gpioTerminate();
-    std::cout << "Rover shutdown complete." << std::endl;
-    
+
+    float getThrottle() const {
+        return rightTrigger - leftTrigger;  // -1.0 to 1.0
+    }
+
+    float getSteering() const {
+        return steeringX;  // -1.0 to 1.0
+    }
+
+    float getRightTrigger() const { return rightTrigger; }
+    float getLeftTrigger() const { return leftTrigger; }
+};
+
+
+class RoverSystem {
+private:
+    std::unique_ptr<MotorController> motors;
+    std::unique_ptr<XboxController> controller;
+
+public:
+    RoverSystem(int leftPWM, int leftDIR, int rightPWM, int rightDIR) {
+        motors = std::make_unique<MotorController>(leftPWM, leftDIR, rightPWM, rightDIR);
+        controller = std::make_unique<XboxController>();
+    }
+
+    bool initialize() {
+        std::cout << "=== Mars Rover Control System ===" << std::endl;
+        std::cout << "Initializing hardware..." << std::endl;
+
+        if (!motors->initialize()) {
+            std::cerr << "❌ Failed to initialize motors" << std::endl;
+            return false;
+        }
+
+        if (!controller->initialize()) {
+            std::cerr << "❌ Failed to initialize controller" << std::endl;
+            return false;
+        }
+
+        std::cout << "\n🚀 Rover ready!" << std::endl;
+        std::cout << "Controls:" << std::endl;
+        std::cout << "  Right Trigger: Forward" << std::endl;
+        std::cout << "  Left Trigger:  Backward" << std::endl;
+        std::cout << "  Left Stick X:  Steering" << std::endl;
+        std::cout << "  Press Ctrl+C to exit\n" << std::endl;
+
+        return true;
+    }
+
+    void run() {
+        while (running) {
+            // Read controller input
+            controller->update();
+
+            // Get throttle and steering values
+            float throttle = controller->getThrottle();
+            float steering = controller->getSteering();
+
+            // Control motors with differential steering
+            motors->setSpeed(throttle, steering);
+
+            // Small delay to prevent CPU overload
+            usleep(CONTROL_LOOP_DELAY);
+        }
+    }
+
+    void shutdown() {
+        std::cout << "Stopping motors..." << std::endl;
+        motors->stop();
+        std::cout << "✅ Rover shutdown complete" << std::endl;
+    }
+};
+
+
+int main() {
+    // Setup signal handler for Ctrl+C
+    signal(SIGINT, signalHandler);
+
+    try {
+        // GPIO Pin Configuration (BCM numbering)
+        const int LEFT_MOTOR_PWM = 17;
+        const int LEFT_MOTOR_DIR = 27;
+        const int RIGHT_MOTOR_PWM = 22;
+        const int RIGHT_MOTOR_DIR = 23;
+
+        // Create and initialize rover system
+        RoverSystem rover(LEFT_MOTOR_PWM, LEFT_MOTOR_DIR, 
+                         RIGHT_MOTOR_PWM, RIGHT_MOTOR_DIR);
+
+        if (!rover.initialize()) {
+            return 1;
+        }
+
+        // Run main control loop
+        rover.run();
+
+        // Clean shutdown
+        rover.shutdown();
+
+    } catch (const std::exception& e) {
+        std::cerr << "❌ Critical error: " << e.what() << std::endl;
+        return 1;
+    }
+
     return 0;
 }
-
