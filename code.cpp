@@ -277,10 +277,10 @@ int main() {
 
     try {
         // GPIO Pin Configuration (BCM numbering)
-        const int LEFT_MOTOR_PWM = 17;
-        const int LEFT_MOTOR_DIR = 27;
-        const int RIGHT_MOTOR_PWM = 22;
-        const int RIGHT_MOTOR_DIR = 23;
+        const int LEFT_MOTOR_PWM = 27;
+        const int LEFT_MOTOR_DIR = 5;
+        const int RIGHT_MOTOR_PWM = 6;
+        const int RIGHT_MOTOR_DIR = 13;
 
         // Create and initialize rover system
         RoverSystem rover(LEFT_MOTOR_PWM, LEFT_MOTOR_DIR, 
@@ -303,3 +303,4 @@ int main() {
 
     return 0;
 }
+
