@@ -78,7 +78,7 @@ public:
         gpioPWM(rightPwmPin, 0);
 
         initialized = true;
-        std::cout << "✅ Motors initialized on GPIO pins" << std::endl;
+        std::cout << " Motors initialized on GPIO pins" << std::endl;
         std::cout << "   Left:  PWM=" << leftPwmPin << " DIR=" << leftDirPin << std::endl;
         std::cout << "   Right: PWM=" << rightPwmPin << " DIR=" << rightDirPin << std::endl;
         return true;
@@ -163,12 +163,12 @@ public:
     bool initialize(const char* device = JOYSTICK_DEVICE) {
         fileDescriptor = open(device, O_RDONLY | O_NONBLOCK);
         if (fileDescriptor < 0) {
-            std::cerr << "❌ Error: Could not open joystick device " << device << std::endl;
+            std::cerr << "  Error: Could not open joystick device " << device << std::endl;
             std::cerr << "   Make sure your Xbox controller is connected" << std::endl;
             std::cerr << "   Check with: ls -l /dev/input/js*" << std::endl;
             return false;
         }
-        std::cout << "✅ Xbox controller connected successfully" << std::endl;
+        std::cout << " Xbox controller connected successfully" << std::endl;
         return true;
     }
 
@@ -227,16 +227,16 @@ public:
         std::cout << "Initializing hardware..." << std::endl;
 
         if (!motors->initialize()) {
-            std::cerr << "❌ Failed to initialize motors" << std::endl;
+            std::cerr << " Failed to initialize motors" << std::endl;
             return false;
         }
 
         if (!controller->initialize()) {
-            std::cerr << "❌ Failed to initialize controller" << std::endl;
+            std::cerr << "Failed to initialize controller" << std::endl;
             return false;
         }
 
-        std::cout << "\n🚀 Rover ready!" << std::endl;
+        std::cout << "\n Rover ready!" << std::endl;
         std::cout << "Controls:" << std::endl;
         std::cout << "  Right Trigger: Forward" << std::endl;
         std::cout << "  Left Trigger:  Backward" << std::endl;
@@ -263,11 +263,11 @@ public:
         }
     }
 
-    void shutdown() {
+    /*void shutdown() {
         std::cout << "Stopping motors..." << std::endl;
         motors->stop();
-        std::cout << "✅ Rover shutdown complete" << std::endl;
-    }
+        std::cout << " Rover shutdown complete" << std::endl;
+    }*/
 };
 
 
@@ -294,10 +294,10 @@ int main() {
         rover.run();
 
         // Clean shutdown
-        rover.shutdown();
+        //rover.shutdown();
 
     } catch (const std::exception& e) {
-        std::cerr << "❌ Critical error: " << e.what() << std::endl;
+        std::cerr << " Critical error: " << e.what() << std::endl;
         return 1;
     }
 
